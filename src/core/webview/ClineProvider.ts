@@ -2473,4 +2473,8 @@ Here is the project's README to help you get started:\n\n${mcpDetails.readmeCont
 			action: "chatButtonClicked",
 		})
 	}
+
+	getCline() {
+		return this.cline
+	}
 }

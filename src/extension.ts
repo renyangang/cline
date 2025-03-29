@@ -9,6 +9,7 @@ import "./utils/path" // necessary to have access to String.prototype.toPosix
 import { DIFF_VIEW_URI_SCHEME } from "./integrations/editor/DiffViewProvider"
 import assert from "node:assert"
 import { telemetryService } from "./services/telemetry/TelemetryService"
+import { AutomationServer } from "./services/automation-server"
 
 /*
 Built using https://github.com/microsoft/vscode-webview-ui-toolkit
@@ -20,6 +21,7 @@ https://github.com/microsoft/vscode-webview-ui-toolkit-samples/tree/main/framewo
 */
 
 let outputChannel: vscode.OutputChannel
+let automationServer: AutomationServer
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -29,6 +31,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 	Logger.initialize(outputChannel)
 	Logger.log("Cline extension activated")
+
+	// 初始化并启动自动化服务器
+	automationServer = new AutomationServer(context)
+	automationServer.start().catch((error) => {
+		Logger.log(`Failed to start automation server: ${error}`)
+	})
 
 	const sidebarProvider = new ClineProvider(context, outputChannel)
 
@@ -383,6 +391,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 // This method is called when your extension is deactivated
 export function deactivate() {
+	// 停止自动化服务器
+	if (automationServer) {
+		automationServer.stop()
+	}
 	telemetryService.shutdown()
 	Logger.log("Cline extension deactivated")
 }
