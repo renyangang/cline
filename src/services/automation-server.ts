@@ -5,7 +5,7 @@ import { ClinePlanModeResponse } from "../shared/ExtensionMessage"
 
 interface CommandRequest {
 	command: string
-	args?: any[]
+	args?: { [key: string]: any }
 }
 
 interface CommandResponse {
@@ -35,7 +35,7 @@ interface TaskStatus {
 
 interface SendTextRequest {
 	text: string
-	shouldSubmit?: boolean
+	isNewTask?: boolean
 }
 
 export class AutomationServer {
@@ -144,31 +144,13 @@ export class AutomationServer {
 					description: "要发送的文本内容",
 				},
 				{
-					name: "shouldSubmit",
+					name: "isNewTask",
 					type: "boolean",
-					description: "是否自动提交（默认为true）",
-				},
-			],
-		},
-		{
-			command: "startNewTask",
-			description: "启动一个新的任务",
-			args: [
-				{
-					name: "task",
-					type: "string",
-					description: "任务的初始消息",
-				},
-				{
-					name: "images",
-					type: "array",
-					description: "可选的图片数据URI数组",
+					description: "是否启动一个新的任务（默认为false）",
 				},
 			],
 		},
 	]
-
-	constructor(private context: vscode.ExtensionContext) {}
 
 	public async start(): Promise<void> {
 		if (this.server) {
@@ -242,144 +224,104 @@ export class AutomationServer {
 	}
 
 	private async executeCommand(request: CommandRequest): Promise<CommandResponse> {
+		let ret_obj: CommandResponse = {
+			success: true,
+			result: "Command executed successfully",
+		}
 		try {
 			console.log(`executeCommand: ${JSON.stringify(request)}`)
 			const vscodeCommand = this.commandMap[request.command]
 			if (!vscodeCommand) {
-				return {
-					success: false,
-					error: `Unknown command: ${request.command}`,
-				}
+				ret_obj.success = false
+				ret_obj.error = `Unknown command: ${request.command}`
+				return ret_obj
 			}
 
 			const visibleProvider = ClineProvider.getVisibleInstance()
 			if (!visibleProvider) {
-				return {
-					success: false,
-					error: "No visible Cline instance found",
-				}
+				ret_obj.success = false
+				ret_obj.error = "No visible Cline instance found"
+				return ret_obj
 			}
 
-			// 特殊处理启动新任务
-			if (request.command === "startNewTask") {
-				const [task, images] = request.args || []
-				await visibleProvider.initClineWithTask(task, images)
-				return {
-					success: true,
-					result: "New task started successfully",
-				}
-			}
-
-			// 特殊处理范围参数
-			let args = request.args || []
-			if (request.command === "addToChat" || request.command === "fixWithCline") {
-				const range = args[0]
-				if (range) {
-					args[0] = new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character)
-				}
-			}
-
-			// 特殊处理模式切换和选择按钮
-			if (request.command === "switchToPlanMode" || request.command === "switchToActMode") {
-				await visibleProvider.togglePlanActModeWithChatSettings({
-					mode: request.command === "switchToPlanMode" ? "plan" : "act",
-				})
-
-				return {
-					success: true,
-					result: "Mode switched successfully",
-				}
-			}
-
-			if (request.command === "clickSelectButton") {
-				const buttonId = args[0]
-				if (buttonId) {
-					await visibleProvider.postMessageToWebview({
-						type: "action",
-						action: "chatButtonClicked",
-						text: buttonId,
+			switch (request.command) {
+				case "switchToPlanMode":
+				case "switchToActMode":
+					await visibleProvider.togglePlanActModeWithChatSettings({
+						mode: request.command === "switchToPlanMode" ? "plan" : "act",
 					})
-				}
-
-				return {
-					success: true,
-					result: "Button clicked successfully",
-				}
-			}
-
-			if (request.command === "getTaskStatus") {
-				// 获取当前Cline实例
-				const cline = visibleProvider.getCline()
-				if (!cline) {
-					return {
-						success: false,
-						error: "No active Cline instance found",
+					ret_obj.result = "Mode switched successfully"
+					break
+				case "clickSelectButton":
+					const buttonId = request.args?.buttonId
+					if (buttonId) {
+						await visibleProvider.postMessageToWebview({
+							type: "action",
+							action: "chatButtonClicked",
+							text: buttonId,
+						})
 					}
-				}
+					ret_obj.result = "Button clicked successfully"
+					break
 
-				// 获取最后一条消息
-				const lastMessage = cline.clineMessages.at(-1)
-				let availableOptions: string[] | undefined
-
-				if (lastMessage?.type === "ask" && lastMessage.ask === "plan_mode_respond") {
-					try {
-						const messageContent = JSON.parse(lastMessage.text || "{}") as ClinePlanModeResponse
-						availableOptions = messageContent.options
-					} catch (e) {
-						console.error("Failed to parse plan mode response:", e)
+				case "getTaskStatus":
+					const cline = visibleProvider.getCline()
+					if (!cline) {
+						ret_obj.success = false
+						ret_obj.error = "No active Cline instance found"
+						break
 					}
-				}
 
-				return {
-					success: true,
-					result: {
+					const lastMessage = cline.clineMessages.at(-1)
+					let availableOptions: string[] | undefined
+
+					if (lastMessage?.type === "ask" && lastMessage.ask === "plan_mode_respond") {
+						try {
+							const messageContent = JSON.parse(lastMessage.text || "{}") as ClinePlanModeResponse
+							availableOptions = messageContent.options
+						} catch (e) {
+							console.error("Failed to parse plan mode response:", e)
+						}
+					}
+
+					ret_obj.result = {
 						isRunning: cline.isStreaming || cline.isWaitingForFirstChunk || cline.isAwaitingPlanResponse,
 						isAwaitingPlanResponse: cline.isAwaitingPlanResponse,
 						availableOptions,
-					},
-				}
-			}
-
-			if (request.command === "sendText") {
-				const sendTextRequest = args[0] as SendTextRequest
-				if (!sendTextRequest || !sendTextRequest.text) {
-					return {
-						success: false,
-						error: "Text content is required",
 					}
-				}
+					break
 
-				// 如果需要提交，发送提交消息
-				if (sendTextRequest.shouldSubmit !== false) {
-					await visibleProvider.postMessageToWebview({
-						type: "invoke",
-						invoke: "sendMessage",
-						text: sendTextRequest.text,
-					})
-				} else {
-					// 发送文本到输入框
-					await visibleProvider.postMessageToWebview({
-						type: "addToInput",
-						text: sendTextRequest.text,
-					})
-				}
+				case "sendText":
+					const sendTextRequest = request.args as SendTextRequest
+					if (!sendTextRequest || !sendTextRequest.text) {
+						ret_obj.success = false
+						ret_obj.error = "Text content is required"
+						break
+					}
 
-				return {
-					success: true,
-					result: "Text sent successfully",
-				}
-			}
+					if (sendTextRequest.isNewTask !== false) {
+						await visibleProvider.initClineWithTask(sendTextRequest.text, [])
+					} else {
+						await visibleProvider.postMessageToWebview({
+							type: "invoke",
+							invoke: "sendMessage",
+							text: sendTextRequest.text,
+						})
+					}
 
-			const result = await vscode.commands.executeCommand(vscodeCommand, ...args)
-			return {
-				success: true,
-				result,
+					ret_obj.result = "Text sent successfully"
+					break
+
+				default:
+					const result = await vscode.commands.executeCommand(vscodeCommand)
+					ret_obj.result = result
+					break
 			}
 		} catch (error) {
-			return {
-				success: false,
-				error: error instanceof Error ? error.message : "Unknown error occurred",
-			}
+			ret_obj.success = false
+			ret_obj.error = error instanceof Error ? error.message : "Unknown error occurred"
 		}
+
+		return ret_obj
 	}
 }
