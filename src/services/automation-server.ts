@@ -313,9 +313,7 @@ export class AutomationServer {
 					break
 
 				default:
-					const result = await vscode.commands.executeCommand(vscodeCommand)
-					ret_obj.result = result
-					break
+					ret_obj.result = await vscode.commands.executeCommand(vscodeCommand)
 			}
 		} catch (error) {
 			ret_obj.success = false
